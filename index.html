@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Hidráulico Pro v4</title>
+    <style>
+        :root {
+            --bg: #1e1e2f; --surface: #252535; --primary: #00a8ff; --secondary: #ff4757;
+            --text: #ecf0f1; --text-dim: #95a5a6; --border: #2c3e50;
+        }
+        body {
+            margin: 0; font-family: 'Segoe UI', sans-serif; background-color: var(--bg);
+            color: var(--text); display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+        #toolbar {
+            display: flex; gap: 5px; padding: 8px; background-color: var(--surface);
+            flex-wrap: wrap; justify-content: center; border-bottom: 2px solid var(--border); z-index: 10;
+        }
+        .tool-btn {
+            padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+            font-weight: bold; color: var(--text); transition: 0.1s; font-size: 13px; background: #33334d;
+        }
+        .tool-btn:hover { background: #3f3f5c; }
+        .tool-btn.active { background: var(--primary); color: #000; border-color: var(--primary); }
+        #limpiar { background: var(--secondary); border-color: var(--secondary); margin-left: 20px; }
+        #toggle-vacuum { background: #9b59b6; border-color: #9b59b6; }
+        #toggle-heat { background: #e67e22; border-color: #e67e22; }
+
+        #main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+        #canvas-wrap {
+            flex: 1; display: flex; justify-content: center; align-items: center;
+            background-color: #15151f; overflow: auto; padding: 10px;
+        }
+        canvas { background-color: #1a1a2a; cursor: crosshair; touch-action: none; image-rendering: crisp-edges; }
+        
+        #sidebar {
+            width: 350px; background-color: var(--surface); border-left: 2px solid var(--border);
+            display: flex; flex-direction: column; transition: all 0.3s ease;
+        }
+        #sidebar.collapsed { width: 50px; }
+        #sidebar.collapsed .sidebar-content { display: none; }
+        
+        .sidebar-header {
+            padding: 15px; display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--border); cursor: pointer;
+        }
+        .sidebar-content { padding: 15px; overflow-y: auto; flex: 1; }
+        
+        h2 { margin-top: 0; color: var(--primary); font-size: 16px; }
+        pre {
+            white-space: pre-wrap; word-wrap: break-word;
+            font-family: 'Consolas', 'Courier New', monospace; font-size: 13px;
+            color: #dfe6e9; margin: 0; line-height: 1.6; background: #1a1a2a; padding: 10px; border-radius: 5px;
+        }
+        .math-card { background-color: #2a2a3d; border: 1px solid var(--border); border-radius: 5px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="toolbar">
+        <button class="tool-btn active" onclick="setTool(this, 'pared', 'wall')">🧱 Pared</button>
+        <button class="tool-btn" style="background:#2980b9" onclick="setTool(this, 'Agua', 'water')">💧 Agua</button>
+        <button class="tool-btn" style="background:#bdc3c7; color:#000" onclick="setTool(this, 'Mercurio', 'mercury')">⚪ Mercurio</button>
+        <button class="tool-btn" style="background:#f1c40f; color:#000" onclick="setTool(this, 'Aceite', 'oil')">🛢️ Aceite</button>
+        <button class="tool-btn" style="background:#8e44ad" onclick="setTool(this, 'Glicerina', 'glycerin')">🟣 Glicerina</button>
+        <button class="tool-btn" style="background:#1abc9c; color:#000" onclick="setTool(this, 'Alcohol', 'alcohol')">🟢 Alcohol</button>
+        <button class="tool-btn" style="background:#16a085" onclick="setTool(this, 'Salada', 'salada')">🌊 Salada</button>
+        <button class="tool-btn" style="background:#e74c3c" onclick="setTool(this, 'corte', 'cut')">✂️ Corte</button>
+        <button class="tool-btn" style="background:#7f8c8d" onclick="setTool(this, 'borrar', 'erase')">🧽 Borrar</button>
+        <button class="tool-btn" style="background:#2ecc71; color:#000" onclick="setTool(this, 'sonda', 'sonda')">📡 Sonda</button>
+        <button class="tool-btn" id="toggle-vacuum" onclick="toggleVacuum(this)">🌪️ Vacío: OFF</button>
+        <button class="tool-btn" id="toggle-heat" onclick="toggleHeat(this)">🔥 Mapa Presión: OFF</button>
+        <button class="tool-btn" id="limpiar" onclick="limpiar()">🗑️ Limpiar</button>
+    </div>
+
+    <div id="main-container">
+        <div id="canvas-wrap">
+            <canvas id="simCanvas"></canvas>
+        </div>
+        <div id="sidebar">
+            <div class="sidebar-header" onclick="toggleSidebar()">
+                <span id="sidebar-title">📊 Análisis</span>
+                <span id="sidebar-arrow">◀</span>
+            </div>
+            <div class="sidebar-content">
+                <div class="math-card">
+                    <pre id="m-procedure">Selecciona la herramienta Sonda (📡) y haz clic sobre un fluido...</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // --- SISTEMA DE AUDIO AVANZADO ---
+    let audioCtx;
+    function playSound(type) {
+        if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let osc = audioCtx.createOscillator();
+        let gain = audioCtx.createGain();
+        let filter = audioCtx.createBiquadFilter();
+        osc.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        let now = audioCtx.currentTime;
+        gain.gain.setValueAtTime(0.15, now);
+        
+        switch(type) {
+            case 'wall': osc.type='square'; osc.frequency.setValueAtTime(120, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.08); break;
+            case 'water': osc.type='sine'; osc.frequency.setValueAtTime(800, now); osc.frequency.exponentialRampToValueAtTime(400, now+0.1); gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.15); break;
+            case 'mercury': osc.type='triangle'; osc.frequency.setValueAtTime(1200, now); osc.frequency.exponentialRampToValueAtTime(600, now+0.05); gain.gain.setValueAtTime(0.2, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.08); break;
+            case 'oil': osc.type='sine'; osc.frequency.setValueAtTime(300, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.2); break;
+            case 'glycerin': osc.type='sawtooth'; osc.frequency.setValueAtTime(80, now); gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.3); break;
+            case 'alcohol': osc.type='sine'; osc.frequency.setValueAtTime(1200, now); osc.frequency.exponentialRampToValueAtTime(900, now+0.05); gain.gain.exponentialRampToValueAtTime(0.001, now+0.1); break;
+            case 'salada': osc.type='sine'; osc.frequency.setValueAtTime(600, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.12); break;
+            case 'cut': osc.type='sawtooth'; osc.frequency.setValueAtTime(500, now); osc.frequency.exponentialRampToValueAtTime(50, now+0.2); gain.gain.setValueAtTime(0.15, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.2); break;
+            case 'erase': osc.type='square'; osc.frequency.setValueAtTime(200, now); osc.frequency.exponentialRampToValueAtTime(800, now+0.1); gain.gain.exponentialRampToValueAtTime(0.001, now+0.15); break;
+            case 'sonda': osc.type='sine'; osc.frequency.setValueAtTime(1000, now); osc.frequency.setValueAtTime(1500, now+0.05); gain.gain.exponentialRampToValueAtTime(0.001, now+0.1); break;
+            case 'vacuum': osc.type='sine'; osc.frequency.setValueAtTime(400, now); osc.frequency.exponentialRampToValueAtTime(50, now+0.5); gain.gain.setValueAtTime(0.2, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.5); break;
+            case 'heat': osc.type='triangle'; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(900, now+0.05); gain.gain.exponentialRampToValueAtTime(0.001, now+0.1); break;
+        }
+        osc.start(now); osc.stop(now + 0.5);
+    }
+
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    const CELL = 16;
+    const GRID_W = 50;
+    const GRID_H = 35;
+    canvas.width = GRID_W * CELL;
+    canvas.height = GRID_H * CELL;
+
+    const G = 9.81;
+    const PATM_PA = 101325;
+    const AREA_CELDA_M2 = 0.0001;
+    const ESCALA_ALTURA_M = 0.1;
+
+    const FLUIDOS = {
+        "Agua":     { densidad: 1000,  viscocidad: 0.001,  color: "#2980b9", sound: 'water' },
+        "Mercurio": { densidad: 13600, viscocidad: 0.0015, color: "#bdc3c7", sound: 'mercury' },
+        "Aceite":   { densidad: 920,   viscocidad: 0.08,   color: "#f1c40f", sound: 'oil' },
+        "Glicerina":{ densidad: 1260,  viscocidad: 1.412,  color: "#8e44ad", sound: 'glycerin' },
+        "Alcohol":  { densidad: 790,   viscocidad: 0.0012, color: "#1abc9c", sound: 'alcohol' },
+        "Salada":   { densidad: 1025,  viscocidad: 0.00108,color: "#16a085", sound: 'salada' }
+    };
+
+    let walls = new Set();
+    let fluids = new Map();
+    let currentTool = "pared";
+    let isDrawing = false;
+    let startPos = null;
+    let currentPos = null;
+    
+    let vacuumMode = false;
+    let showHeatmap = false;
+
+    function setTool(btn, tool, sound) {
+        currentTool = tool;
+        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if(sound) playSound(sound);
+    }
+
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('collapsed');
+        document.getElementById('sidebar-arrow').innerText = document.getElementById('sidebar').classList.contains('collapsed') ? '▶' : '◀';
+    }
+
+    function toggleVacuum(btn) {
+        vacuumMode = !vacuumMode;
+        btn.innerText = vacuumMode ? "🌪️ Vacío: ON" : "🌪️ Vacío: OFF";
+        btn.style.background = vacuumMode ? "#2ecc71" : "#9b59b6";
+        playSound('vacuum');
+    }
+
+    function toggleHeat(btn) {
+        showHeatmap = !showHeatmap;
+        btn.innerText = showHeatmap ? "🔥 Mapa Presión: ON" : "🔥 Mapa Presión: OFF";
+        btn.style.background = showHeatmap ? "#2ecc71" : "#e67e22";
+        playSound('heat');
+    }
+
+    function limpiar() {
+        walls.clear(); fluids.clear();
+        document.getElementById('m-procedure').innerText = "Lienzo limpio. ¡Empieza a crear!";
+        playSound('erase');
+    }
+
+    function getCell(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = Math.floor((e.clientX - rect.left) * scaleX / CELL);
+        const y = Math.floor((e.clientY - rect.top) * scaleY / CELL);
+        return { x, y };
+    }
+
+    function applyTool(x, y) {
+        if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
+        const key = `${x},${y}`;
+        
+        if (currentTool === "pared") {
+            if (!fluids.has(key)) {
+                walls.add(key);
+                if(Math.random() > 0.7) playSound('wall');
+            }
+        } else if (currentTool === "borrar") {
+            walls.delete(key); fluids.delete(key);
+            if(Math.random() > 0.8) playSound('erase');
+        } else if (FLUIDOS[currentTool]) {
+            if (!walls.has(key)) {
+                if (fluids.has(key)) {
+                    const existing = fluids.get(key);
+                    if (existing !== currentTool) {
+                        let moved = false;
+                        for(let upY = y-1; upY >= 0; upY--) {
+                            let upKey = `${x},${upY}`;
+                            if (!walls.has(upKey) && !fluids.has(upKey)) { fluids.set(upKey, existing); moved = true; break; }
+                        }
+                        if (moved) fluids.set(key, currentTool);
+                    }
+                } else {
+                    fluids.set(key, currentTool);
+                    if(Math.random() > 0.9) playSound(FLUIDOS[currentTool].sound);
+                }
+            }
+        }
+    }
+
+    function bresenham(x0, y0, x1, y1, callback) {
+        const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+        const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+        let err = dx - dy;
+        while(true) {
+            callback(x0, y0);
+            if (x0 === x1 && y0 === y1) break;
+            const e2 = 2 * err;
+            if (e2 > -dy) { err -= dy; x0 += sx; }
+            if (e2 < dx) { err += dx; y0 += sy; }
+        }
+    }
+
+    function handleStart(e) {
+        e.preventDefault();
+        const { x, y } = getCell(e.touches ? e.touches[0] : e);
+        if (currentTool === "sonda") { sonda(x, y); return; }
+        
+        isDrawing = true; startPos = {x,y}; currentPos = {x,y};
+        if(currentTool !== "corte") applyTool(x, y);
+    }
+
+    function handleMove(e) {
+        e.preventDefault();
+        const { x, y } = getCell(e.touches ? e.touches[0] : e);
+        currentPos = {x,y};
+        
+        if (isDrawing) {
+            if (currentTool === "corte") return;
+            applyTool(x, y);
+        }
+    }
+
+    function handleEnd(e) {
+        if (isDrawing && currentTool === "corte" && startPos && currentPos) {
+            bresenham(startPos.x, startPos.y, currentPos.x, currentPos.y, (x, y) => {
+                const key = `${x},${y}`;
+                walls.delete(key); fluids.delete(key);
+            });
+            playSound('cut');
+        }
+        isDrawing = false; startPos = null; currentPos = null;
+    }
+
+    canvas.addEventListener('mousedown', handleStart);
+    canvas.addEventListener('mousemove', handleMove);
+    canvas.addEventListener('mouseup', handleEnd);
+    canvas.addEventListener('touchstart', handleStart);
+    canvas.addEventListener('touchmove', handleMove);
+    canvas.addEventListener('touchend', handleEnd);
+
+    // Motor de Fluidos Optimizado (Rápido y con Sifón)
+    function physicsStep() {
+        let toProcess = [];
+        fluids.forEach((fluidType, key) => {
+            let [x, y] = key.split(',').map(Number);
+            toProcess.push({x, y, fluidType, key});
+        });
+        
+        toProcess.sort((a, b) => b.y - a.y);
+        if (Math.random() > 0.5) toProcess.reverse();
+
+        // Encontrar nivel más alto de líquido para Sifón
+        let maxFluidY = GRID_H;
+        for(let p of toProcess) { if(p.y < maxFluidY) maxFluidY = p.y; }
+
+        for (let p of toProcess) {
+            const { x, y, fluidType, key } = p;
+            
+            // Regla de viscosidad: La glicerina es lenta, el agua rápida.
+            let visc = FLUIDOS[fluidType].viscocidad;
+            if (visc > 0.5 && Math.random() > (1 / (visc + 1))) continue;
+
+            const belowKey = `${x},${y+1}`;
+            const blKey = `${x-1},${y+1}`;
+            const brKey = `${x+1},${y+1}`;
+            const leftKey = `${x-1},${y}`;
+            const rightKey = `${x+1},${y}`;
+            const upKey = `${x},${y-1}`;
+
+            let moved = false;
+
+            // 1. Gravedad Directa
+            if (y + 1 < GRID_H && !walls.has(belowKey)) {
+                if (!fluids.has(belowKey)) {
+                    if(vacuumMode && y > 0 && !fluids.has(upKey) && !walls.has(upKey)) {
+                        let isSealed = true;
+                        for(let cy=y-1; cy>=0; cy--) {
+                            if(!walls.has(`${x},${cy}`) && !fluids.has(`${x},${cy}`)) { isSealed = false; break; }
+                        }
+                        if(isSealed) continue;
+                    }
+                    fluids.set(belowKey, fluidType); fluids.delete(key); moved = true;
+                } else {
+                    const fluidBelow = fluids.get(belowKey);
+                    if (FLUIDOS[fluidType].densidad > FLUIDOS[fluidBelow].densidad) {
+                        fluids.set(belowKey, fluidType); fluids.set(key, fluidBelow); moved = true;
+                    }
+                }
+            }
+            if (moved) continue;
+
+            // 2. Flujo Diagonal hacia abajo (Sin fugas)
+            if (y + 1 < GRID_H) {
+                const tryDiag = Math.random() > 0.5 ? [blKey, brKey] : [brKey, blKey];
+                for (let dKey of tryDiag) {
+                    let dx = parseInt(dKey.split(',')[0]);
+                    let dy = parseInt(dKey.split(',')[1]);
+                    if (dx >= 0 && dx < GRID_W) {
+                        let side1 = `${dx},${y}`;
+                        let side2 = `${x},${dy}`;
+                        if (!(walls.has(dKey) || (walls.has(side1) && walls.has(side2)))) {
+                            if (!fluids.has(dKey) || (fluids.has(dKey) && FLUIDOS[fluidType].densidad > FLUIDOS[fluids.get(dKey)].densidad)) {
+                                if (fluids.has(dKey)) {
+                                    let temp = fluids.get(dKey);
+                                    fluids.set(dKey, fluidType); fluids.set(key, temp);
+                                } else {
+                                    fluids.set(dKey, fluidType); fluids.delete(key);
+                                }
+                                moved = true; break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (moved) continue;
+
+            // 3. Flujo Horizontal
+            const dirs = Math.random() > 0.5 ? [leftKey, rightKey] : [rightKey, leftKey];
+            for (let dKey of dirs) {
+                let dx = parseInt(dKey.split(',')[0]);
+                if (dx >= 0 && dx < GRID_W) {
+                    if (!walls.has(dKey) && !fluids.has(dKey)) {
+                        fluids.set(dKey, fluidType); fluids.delete(key); moved = true; break;
+                    }
+                }
+            }
+            if (moved) continue;
+
+            // 4. SIFÓN (Presión hacia arriba)
+            if (y > 0 && y - 1 >= maxFluidY && !walls.has(upKey) && !fluids.has(upKey)) {
+                fluids.set(upKey, fluidType); fluids.delete(key); moved = true;
+            }
+        }
+    }
+
+    // Cálculos Matemáticos
+    function sonda(gx, gy) {
+        const key = `${gx},${gy}`;
+        playSound('sonda');
+        if (walls.has(key)) {
+            document.getElementById('m-procedure').innerText = "Error: Punto sólido (Pared).";
+            return;
+        }
+        if (!fluids.has(key)) {
+            document.getElementById('m-procedure').innerText = "Punto vacío (Aire).\nPresión Atmosférica: 101.325 kPa";
+            return;
+        }
+        
+        let targetFluid = fluids.get(key);
+        let layers = [];
+        let check_y = gy;
+        let topY = gy;
+        
+        while (check_y >= 0) {
+            let f = fluids.get(`${gx},${check_y}`);
+            if (f) {
+                layers.push({ fluid: f, y: check_y });
+                topY = check_y;
+            }
+            check_y--;
+        }
+        
+        let groupedLayers = [];
+        let currentLayer = null;
+        for (let i = layers.length - 1; i >= 0; i--) {
+            if (!currentLayer || currentLayer.fluid !== layers[i].fluid) {
+                if (currentLayer) groupedLayers.push(currentLayer);
+                currentLayer = { fluid: layers[i].fluid, count: 1 };
+            } else {
+                currentLayer.count++;
+            }
+        }
+        if (currentLayer) groupedLayers.push(currentLayer);
+        
+        const rho = FLUIDOS[targetFluid].densidad;
+        const mu = FLUIDOS[targetFluid].viscocidad;
+        const gamma = rho * G;
+        const nu = mu / rho;
+        
+        const depth_m = (gy - topY + 1) * ESCALA_ALTURA_M;
+        let totalP_Pa = 0;
+        
+        let txt = "══════════════════════════════\n";
+        txt += "  ANÁLISIS HIDROSTÁTICO\n";
+        txt += "══════════════════════════════\n";
+        txt += `Ubicación : [X:${gx}, Y:${gy}]\n`;
+        txt += `Fluido    : ${targetFluid}\n`;
+        txt += `Densidad ρ: ${rho} kg/m³\n`;
+        txt += `Viscosidad μ: ${mu} Pa·s\n`;
+        txt += `Peso Esp. γ: ${gamma.toFixed(2)} N/m³\n`;
+        txt += "──────────────────────────────\n";
+        txt += "1. CÁLCULO DE PRESIÓN (P = ρ·g·h)\n";
+        txt += "   Fórmula: P_mano = Σ(γ_i · h_i)\n\n";
+        
+        groupedLayers.forEach((layer, idx) => {
+            let h_m = layer.count * ESCALA_ALTURA_M;
+            let p = FLUIDOS[layer.fluid].densidad * G * h_m;
+            totalP_Pa += p;
+            txt += `   Capa ${idx+1} (${layer.fluid}):\n`;
+            txt += `     h_${idx+1} = ${layer.count} celdas = ${h_m.toFixed(2)} m\n`;
+            txt += `     P_${idx+1} = ${(FLUIDOS[layer.fluid].densidad * G).toFixed(2)} * ${h_m.toFixed(2)} = ${p.toFixed(2)} Pa\n`;
+        });
+        
+        txt += "\n   --------------------------\n";
+        txt += `   Σ P_mano = ${totalP_Pa.toFixed(2)} Pa\n`;
+        txt += `   Σ P_mano = ${(totalP_Pa/1000).toFixed(2)} kPa\n\n`;
+        txt += "2. PRESIÓN ABSOLUTA\n";
+        txt += "   Fórmula: P_abs = P_atm + P_mano\n";
+        txt += `   P_abs = 101325 + ${totalP_Pa.toFixed(2)}\n`;
+        txt += `   P_abs = ${(101325+totalP_Pa).toFixed(2)} Pa\n\n`;
+        txt += "3. FUERZA SOBRE EL ÁREA\n";
+        txt += `   F = P · A  (A = ${AREA_CELDA_M2} m²)\n`;
+        txt += `   F = ${totalP_Pa.toFixed(2)} * ${AREA_CELDA_M2}\n`;
+        txt += `   F = ${(totalP_Pa * AREA_CELDA_M2).toFixed(4)} N\n`;
+        txt += "══════════════════════════════\n";
+        
+        document.getElementById('m-procedure').innerText = txt;
+    }
+
+    // Renderizado
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.strokeStyle = "#2c2c3e";
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= GRID_W; i++) {
+            ctx.beginPath(); ctx.moveTo(i * CELL, 0); ctx.lineTo(i * CELL, canvas.height); ctx.stroke();
+        }
+        for (let j = 0; j <= GRID_H; j++) {
+            ctx.beginPath(); ctx.moveTo(0, j * CELL); ctx.lineTo(canvas.width, j * CELL); ctx.stroke();
+        }
+
+        fluids.forEach((fluidType, key) => {
+            let [x, y] = key.split(',').map(Number);
+            ctx.fillStyle = FLUIDOS[fluidType].color;
+            ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+        });
+
+        // MAPA DE PRESIÓN CORREGIDO (BFS Hidrostático)
+        if(showHeatmap) {
+            let pMap = new Map();
+            let q = [];
+            
+            // 1. Encontrar superficies libres
+            fluids.forEach((f, key) => {
+                let [x,y] = key.split(',').map(Number);
+                // Si arriba no hay fluido ni pared, es superficie abierta
+                if(!fluids.has(`${x},${y-1}`) && !walls.has(`${x},${y-1}`)) { 
+                    pMap.set(key, 0);
+                    q.push(key);
+                }
+            });
+
+            // 2. Propagar presión usando BFS (Fluidos conectados)
+            let idx = 0;
+            while(idx < q.length) {
+                let key = q[idx++];
+                let [x, y] = key.split(',').map(Number);
+                let f = fluids.get(key);
+                let p = pMap.get(key);
+                let dh = FLUIDOS[f].densidad * G * ESCALA_ALTURA_M;
+                
+                // Abajo
+                let nKey = `${x},${y+1}`;
+                if(fluids.has(nKey) && !pMap.has(nKey)) {
+                    let nf = fluids.get(nKey);
+                    pMap.set(nKey, p + (FLUIDOS[nf].densidad * G * ESCALA_ALTURA_M));
+                    q.push(nKey);
+                }
+                // Arriba
+                nKey = `${x},${y-1}`;
+                if(fluids.has(nKey) && !pMap.has(nKey)) {
+                    pMap.set(nKey, p - dh);
+                    q.push(nKey);
+                }
+                // Izquierda/Derecha
+                nKey = `${x-1},${y}`;
+                if(fluids.has(nKey) && !pMap.has(nKey)) {
+                    pMap.set(nKey, p);
+                    q.push(nKey);
+                }
+                nKey = `${x+1},${y}`;
+                if(fluids.has(nKey) && !pMap.has(nKey)) {
+                    pMap.set(nKey, p);
+                    q.push(nKey);
+                }
+            }
+
+            // 3. Dibujar rojo translúcido
+            fluids.forEach((fluidType, key) => {
+                let [x, y] = key.split(',').map(Number);
+                let p = pMap.get(key) || 0;
+                if (p < 0) p = 0; // Sin presiones negativas
+                let alpha = Math.min(0.7, p / 50000);
+                ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+            });
+        }
+
+        walls.forEach(key => {
+            let [x, y] = key.split(',').map(Number);
+            ctx.fillStyle = "#555";
+            ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+        });
+
+        if (isDrawing && startPos && currentPos && currentTool === "corte") {
+            ctx.strokeStyle = "#ff4757";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(startPos.x * CELL + CELL/2, startPos.y * CELL + CELL/2);
+            ctx.lineTo(currentPos.x * CELL + CELL/2, currentPos.y * CELL + CELL/2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    }
+
+    function loop() {
+        for(let i=0; i<5; i++) physicsStep(); // Físicas ejecutadas 5 veces por frame para alta velocidad
+        draw();
+        requestAnimationFrame(loop);
+    }
+    loop();
+</script>
+</body>
+</html>
