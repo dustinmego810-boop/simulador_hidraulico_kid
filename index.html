@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador Hidráulico Pro v4</title>
+    <title>Simulador Hidráulico Pro v8</title>
     <style>
         :root {
             --bg: #1e1e2f; --surface: #252535; --primary: #00a8ff; --secondary: #ff4757;
@@ -26,6 +26,7 @@
         #limpiar { background: var(--secondary); border-color: var(--secondary); margin-left: 20px; }
         #toggle-vacuum { background: #9b59b6; border-color: #9b59b6; }
         #toggle-heat { background: #e67e22; border-color: #e67e22; }
+        #toggle-physics { background: #2c3e50; border-color: #2c3e50; }
 
         #main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
         #canvas-wrap {
@@ -48,18 +49,24 @@
         .sidebar-content { padding: 15px; overflow-y: auto; flex: 1; }
         
         h2 { margin-top: 0; color: var(--primary); font-size: 16px; }
+        h3 { margin: 10px 0 5px 0; color: var(--text-dim); font-size: 14px; border-bottom: 1px solid #444; padding-bottom: 5px; }
+        
         pre {
             white-space: pre-wrap; word-wrap: break-word;
             font-family: 'Consolas', 'Courier New', monospace; font-size: 13px;
             color: #dfe6e9; margin: 0; line-height: 1.6; background: #1a1a2a; padding: 10px; border-radius: 5px;
         }
-        .math-card { background-color: #2a2a3d; border: 1px solid var(--border); border-radius: 5px; margin-bottom: 10px; }
+        .math-card { background-color: #2a2a3d; border: 1px solid var(--border); border-radius: 5px; margin-bottom: 15px; }
+        
+        .counter-row { display: flex; justify-content: space-between; align-items: center; font-family: monospace; font-size: 14px; margin-bottom: 8px; }
+        .counter-color { width: 12px; height: 12px; border-radius: 2px; margin-right: 8px; border: 1px solid #000; }
     </style>
 </head>
 <body>
 
     <div id="toolbar">
         <button class="tool-btn active" onclick="setTool(this, 'pared', 'wall')">🧱 Pared</button>
+        <button class="tool-btn" id="toggle-physics" onclick="togglePhysics(this)">⏸️ Pausar Física</button>
         <button class="tool-btn" style="background:#2980b9" onclick="setTool(this, 'Agua', 'water')">💧 Agua</button>
         <button class="tool-btn" style="background:#bdc3c7; color:#000" onclick="setTool(this, 'Mercurio', 'mercury')">⚪ Mercurio</button>
         <button class="tool-btn" style="background:#f1c40f; color:#000" onclick="setTool(this, 'Aceite', 'oil')">🛢️ Aceite</button>
@@ -80,12 +87,16 @@
         </div>
         <div id="sidebar">
             <div class="sidebar-header" onclick="toggleSidebar()">
-                <span id="sidebar-title">📊 Análisis</span>
+                <span id="sidebar-title">📊 Análisis y Control</span>
                 <span id="sidebar-arrow">◀</span>
             </div>
             <div class="sidebar-content">
                 <div class="math-card">
-                    <pre id="m-procedure">Selecciona la herramienta Sonda (📡) y haz clic sobre un fluido...</pre>
+                    <h3>Conteo de Volumen (Bloques)</h3>
+                    <div id="fluid-counter" style="padding: 5px 10px;"></div>
+                </div>
+                <div class="math-card">
+                    <pre id="m-procedure">Selecciona la herramienta Sonda (📡) y haz clic sobre un fluido o pared...</pre>
                 </div>
             </div>
         </div>
@@ -116,6 +127,8 @@
             case 'sonda': osc.type='sine'; osc.frequency.setValueAtTime(1000, now); osc.frequency.setValueAtTime(1500, now+0.05); gain.gain.exponentialRampToValueAtTime(0.001, now+0.1); break;
             case 'vacuum': osc.type='sine'; osc.frequency.setValueAtTime(400, now); osc.frequency.exponentialRampToValueAtTime(50, now+0.5); gain.gain.setValueAtTime(0.2, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.5); break;
             case 'heat': osc.type='triangle'; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(900, now+0.05); gain.gain.exponentialRampToValueAtTime(0.001, now+0.1); break;
+            case 'pause': osc.type='square'; osc.frequency.setValueAtTime(300, now); gain.gain.exponentialRampToValueAtTime(0.001, now+0.1); break;
+            case 'play': osc.type='square'; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(900, now+0.05); gain.gain.exponentialRampToValueAtTime(0.001, now+0.15); break;
         }
         osc.start(now); osc.stop(now + 0.5);
     }
@@ -152,6 +165,7 @@
     
     let vacuumMode = false;
     let showHeatmap = false;
+    let physicsActive = true; // NUEVO: Controla si la física está corriendo
 
     function setTool(btn, tool, sound) {
         currentTool = tool;
@@ -177,6 +191,14 @@
         btn.innerText = showHeatmap ? "🔥 Mapa Presión: ON" : "🔥 Mapa Presión: OFF";
         btn.style.background = showHeatmap ? "#2ecc71" : "#e67e22";
         playSound('heat');
+    }
+
+    // NUEVA FUNCIÓN: PAUSAR FÍSICA
+    function togglePhysics(btn) {
+        physicsActive = !physicsActive;
+        btn.innerText = physicsActive ? "⏸️ Pausar Física" : "▶️ Reanudar Física";
+        btn.style.background = physicsActive ? "#2c3e50" : "#e67e22"; // Naranja cuando está pausado
+        playSound(physicsActive ? 'play' : 'pause');
     }
 
     function limpiar() {
@@ -208,15 +230,36 @@
             if(Math.random() > 0.8) playSound('erase');
         } else if (FLUIDOS[currentTool]) {
             if (!walls.has(key)) {
+                // Si la física está pausada, simplemente colocamos el bloque sin lógica de empuje (colocación estática)
+                if (!physicsActive) {
+                    fluids.set(key, currentTool);
+                    if(Math.random() > 0.9) playSound(FLUIDOS[currentTool].sound);
+                    return;
+                }
+
+                // Lógica normal con empuje (cuando la física está activa)
                 if (fluids.has(key)) {
                     const existing = fluids.get(key);
                     if (existing !== currentTool) {
-                        let moved = false;
-                        for(let upY = y-1; upY >= 0; upY--) {
-                            let upKey = `${x},${upY}`;
-                            if (!walls.has(upKey) && !fluids.has(upKey)) { fluids.set(upKey, existing); moved = true; break; }
+                        let targetKey = null;
+                        if (FLUIDOS[currentTool].densidad > FLUIDOS[existing].densidad) {
+                            for(let upY = y-1; upY >= 0; upY--) {
+                                let upKey = `${x},${upY}`;
+                                if (!walls.has(upKey) && !fluids.has(upKey)) { targetKey = upKey; break; }
+                            }
+                            if (targetKey) {
+                                fluids.set(targetKey, existing);
+                                fluids.set(key, currentTool);
+                            }
+                        } else {
+                            for(let upY = y-1; upY >= 0; upY--) {
+                                let upKey = `${x},${upY}`;
+                                if (!walls.has(upKey) && !fluids.has(upKey)) { targetKey = upKey; break; }
+                            }
+                            if (targetKey) {
+                                fluids.set(targetKey, currentTool);
+                            }
                         }
-                        if (moved) fluids.set(key, currentTool);
                     }
                 } else {
                     fluids.set(key, currentTool);
@@ -277,8 +320,11 @@
     canvas.addEventListener('touchmove', handleMove);
     canvas.addEventListener('touchend', handleEnd);
 
-    // Motor de Fluidos Optimizado (Rápido y con Sifón)
+    // --- MOTOR DE FLUIDOS (REPOSO, SIN CAOS, SIN FUGAS, SIN DUPLICACIONES) ---
     function physicsStep() {
+        // Si la física está pausada, no hacer nada
+        if (!physicsActive) return;
+
         let toProcess = [];
         fluids.forEach((fluidType, key) => {
             let [x, y] = key.split(',').map(Number);
@@ -288,16 +334,16 @@
         toProcess.sort((a, b) => b.y - a.y);
         if (Math.random() > 0.5) toProcess.reverse();
 
-        // Encontrar nivel más alto de líquido para Sifón
         let maxFluidY = GRID_H;
         for(let p of toProcess) { if(p.y < maxFluidY) maxFluidY = p.y; }
 
         for (let p of toProcess) {
             const { x, y, fluidType, key } = p;
             
-            // Regla de viscosidad: La glicerina es lenta, el agua rápida.
+            if (!fluids.has(key) || fluids.get(key) !== fluidType) continue;
+            
             let visc = FLUIDOS[fluidType].viscocidad;
-            if (visc > 0.5 && Math.random() > (1 / (visc + 1))) continue;
+            if (Math.random() < visc / 1.5) continue;
 
             const belowKey = `${x},${y+1}`;
             const blKey = `${x-1},${y+1}`;
@@ -308,7 +354,6 @@
 
             let moved = false;
 
-            // 1. Gravedad Directa
             if (y + 1 < GRID_H && !walls.has(belowKey)) {
                 if (!fluids.has(belowKey)) {
                     if(vacuumMode && y > 0 && !fluids.has(upKey) && !walls.has(upKey)) {
@@ -328,7 +373,6 @@
             }
             if (moved) continue;
 
-            // 2. Flujo Diagonal hacia abajo (Sin fugas)
             if (y + 1 < GRID_H) {
                 const tryDiag = Math.random() > 0.5 ? [blKey, brKey] : [brKey, blKey];
                 for (let dKey of tryDiag) {
@@ -353,33 +397,85 @@
             }
             if (moved) continue;
 
-            // 3. Flujo Horizontal
-            const dirs = Math.random() > 0.5 ? [leftKey, rightKey] : [rightKey, leftKey];
-            for (let dKey of dirs) {
-                let dx = parseInt(dKey.split(',')[0]);
-                if (dx >= 0 && dx < GRID_W) {
-                    if (!walls.has(dKey) && !fluids.has(dKey)) {
-                        fluids.set(dKey, fluidType); fluids.delete(key); moved = true; break;
+            let canMoveLeft = (x - 1 >= 0) && !walls.has(leftKey) && !fluids.has(leftKey);
+            let canMoveRight = (x + 1 < GRID_W) && !walls.has(rightKey) && !fluids.has(rightKey);
+            
+            let leftBelowSolid = (x - 1 >= 0) && (walls.has(`${x-1},${y+1}`) || fluids.has(`${x-1},${y+1}`));
+            let rightBelowSolid = (x + 1 < GRID_W) && (walls.has(`${x+1},${y+1}`) || fluids.has(`${x+1},${y+1}`));
+
+            if (canMoveLeft && !canMoveRight) {
+                if (!leftBelowSolid || Math.random() > 0.5) {
+                    fluids.set(leftKey, fluidType); fluids.delete(key); moved = true;
+                }
+            } else if (canMoveRight && !canMoveLeft) {
+                if (!rightBelowSolid || Math.random() > 0.5) {
+                    fluids.set(rightKey, fluidType); fluids.delete(key); moved = true;
+                }
+            } else if (canMoveLeft && canMoveRight) {
+                if (!leftBelowSolid && rightBelowSolid) {
+                    fluids.set(leftKey, fluidType); fluids.delete(key); moved = true;
+                } else if (!rightBelowSolid && leftBelowSolid) {
+                    fluids.set(rightKey, fluidType); fluids.delete(key); moved = true;
+                } else if (!leftBelowSolid && !rightBelowSolid) {
+                    // Ambos lados son vacío (pilar estrecho), quedarse quieto para no temblar.
+                } else {
+                    if (Math.random() > 0.8) {
+                        let dKey = Math.random() > 0.5 ? leftKey : rightKey;
+                        fluids.set(dKey, fluidType); fluids.delete(key); moved = true;
                     }
                 }
             }
             if (moved) continue;
 
-            // 4. SIFÓN (Presión hacia arriba)
             if (y > 0 && y - 1 >= maxFluidY && !walls.has(upKey) && !fluids.has(upKey)) {
                 fluids.set(upKey, fluidType); fluids.delete(key); moved = true;
             }
         }
     }
 
-    // Cálculos Matemáticos
+    // --- CÁLCULOS DE SONDA (FLUIDOS Y PAREDES) ---
     function sonda(gx, gy) {
         const key = `${gx},${gy}`;
         playSound('sonda');
+        
         if (walls.has(key)) {
-            document.getElementById('m-procedure').innerText = "Error: Punto sólido (Pared).";
+            let maxP = 0;
+            let pushingFluid = "Ninguno";
+            let neighbors = [`${gx+1},${gy}`, `${gx-1},${gy}`, `${gx},${gy+1}`, `${gx},${gy-1}`];
+            for(let nKey of neighbors) {
+                if (fluids.has(nKey)) {
+                    let f = fluids.get(nKey);
+                    let [nx, ny] = nKey.split(',').map(Number);
+                    let h = 0;
+                    let cy = ny;
+                    while (cy >= 0 && fluids.get(`${nx},${cy}`) === f) {
+                        h += ESCALA_ALTURA_M;
+                        cy--;
+                    }
+                    let p = FLUIDOS[f].densidad * G * h;
+                    if (p > maxP) { maxP = p; pushingFluid = f; }
+                }
+            }
+            
+            let txt = "══════════════════════════════\n";
+            txt += "  ANÁLISIS DE ESTRUCTURA\n";
+            txt += "══════════════════════════════\n";
+            txt += `Ubicación: [X:${gx}, Y:${gy}] (Pared)\n`;
+            txt += `Fluido adyacente: ${pushingFluid}\n\n`;
+            txt += "1. PRESIÓN HIDROSTÁTICA\n";
+            txt += `   P = ρ · g · h\n`;
+            txt += `   P = ${maxP.toFixed(2)} Pa\n`;
+            txt += `   P = ${(maxP/1000).toFixed(2)} kPa\n\n`;
+            txt += "2. FUERZA SOBRE LA PARED\n";
+            txt += `   F = P · A  (A = ${AREA_CELDA_M2} m²)\n`;
+            txt += `   F = ${maxP.toFixed(2)} * ${AREA_CELDA_M2}\n`;
+            txt += `   F = ${(maxP * AREA_CELDA_M2).toFixed(4)} N\n`;
+            txt += "══════════════════════════════\n";
+            
+            document.getElementById('m-procedure').innerText = txt;
             return;
         }
+        
         if (!fluids.has(key)) {
             document.getElementById('m-procedure').innerText = "Punto vacío (Aire).\nPresión Atmosférica: 101.325 kPa";
             return;
@@ -456,7 +552,7 @@
         document.getElementById('m-procedure').innerText = txt;
     }
 
-    // Renderizado
+    // --- RENDERIZADO ---
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
@@ -475,22 +571,18 @@
             ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
         });
 
-        // MAPA DE PRESIÓN CORREGIDO (BFS Hidrostático)
         if(showHeatmap) {
             let pMap = new Map();
             let q = [];
             
-            // 1. Encontrar superficies libres
             fluids.forEach((f, key) => {
                 let [x,y] = key.split(',').map(Number);
-                // Si arriba no hay fluido ni pared, es superficie abierta
                 if(!fluids.has(`${x},${y-1}`) && !walls.has(`${x},${y-1}`)) { 
                     pMap.set(key, 0);
                     q.push(key);
                 }
             });
 
-            // 2. Propagar presión usando BFS (Fluidos conectados)
             let idx = 0;
             while(idx < q.length) {
                 let key = q[idx++];
@@ -499,20 +591,17 @@
                 let p = pMap.get(key);
                 let dh = FLUIDOS[f].densidad * G * ESCALA_ALTURA_M;
                 
-                // Abajo
                 let nKey = `${x},${y+1}`;
                 if(fluids.has(nKey) && !pMap.has(nKey)) {
                     let nf = fluids.get(nKey);
                     pMap.set(nKey, p + (FLUIDOS[nf].densidad * G * ESCALA_ALTURA_M));
                     q.push(nKey);
                 }
-                // Arriba
                 nKey = `${x},${y-1}`;
                 if(fluids.has(nKey) && !pMap.has(nKey)) {
                     pMap.set(nKey, p - dh);
                     q.push(nKey);
                 }
-                // Izquierda/Derecha
                 nKey = `${x-1},${y}`;
                 if(fluids.has(nKey) && !pMap.has(nKey)) {
                     pMap.set(nKey, p);
@@ -525,14 +614,27 @@
                 }
             }
 
-            // 3. Dibujar rojo translúcido
             fluids.forEach((fluidType, key) => {
                 let [x, y] = key.split(',').map(Number);
                 let p = pMap.get(key) || 0;
-                if (p < 0) p = 0; // Sin presiones negativas
-                let alpha = Math.min(0.7, p / 50000);
+                if (p < 0) p = 0;
+                let alpha = Math.min(0.85, p / 15000);
                 ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
                 ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+            });
+            
+            walls.forEach(key => {
+                let [x, y] = key.split(',').map(Number);
+                let maxP = 0;
+                let neighbors = [`${x+1},${y}`, `${x-1},${y}`, `${x},${y+1}`, `${x},${y-1}`];
+                neighbors.forEach(nKey => {
+                    if (pMap.has(nKey)) maxP = Math.max(maxP, pMap.get(nKey));
+                });
+                if (maxP > 0) {
+                    let alpha = Math.min(0.6, maxP / 15000);
+                    ctx.fillStyle = `rgba(255, 150, 150, ${alpha})`;
+                    ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+                }
             });
         }
 
@@ -552,10 +654,22 @@
             ctx.stroke();
             ctx.setLineDash([]);
         }
+        
+        // Actualizar contador de bloques
+        let counts = {};
+        fluids.forEach(f => { counts[f] = (counts[f] || 0) + 1; });
+        let html = "";
+        for(let f in FLUIDOS) {
+            html += `<div class="counter-row">
+                        <span style="display:flex;align-items:center;"><span class="counter-color" style="background:${FLUIDOS[f].color}"></span> ${f}</span>
+                        <span>${counts[f] || 0}</span>
+                     </div>`;
+        }
+        document.getElementById('fluid-counter').innerHTML = html;
     }
 
     function loop() {
-        for(let i=0; i<5; i++) physicsStep(); // Físicas ejecutadas 5 veces por frame para alta velocidad
+        for(let i=0; i<4; i++) physicsStep();
         draw();
         requestAnimationFrame(loop);
     }
